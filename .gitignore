@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+
+# Database files
+*.db
+
+# User uploads and processed files
+uploads/
+processed/
+
+# AWS credentials
+*.pem
+.aws/
+
+# OS files
+.DS_Store
+Thumbs.db
