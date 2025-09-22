@@ -101,19 +101,11 @@ async function processVideoAsync(s3Key, outputS3Key, options, jobId, connection)
     tempInputPath = path.join(tempDir, `input_${jobId}.tmp`);
     tempOutputPath = path.join(tempDir, `output_${jobId}.${options.format}`);
 
-    // Download from S3 to temp file
+    // Download from S3 to temp file - FIXED VERSION
     console.log(`Downloading ${s3Key} from S3...`);
-    const s3Stream = await downloadFromS3(s3Key);
-    const writeStream = require('fs').createWriteStream(tempInputPath);
-    
-    await new Promise((resolve, reject) => {
-      s3Stream.pipe(writeStream);
-      s3Stream.on('error', reject);
-      writeStream.on('finish', resolve);
-      writeStream.on('error', reject);
-    });
-
-    console.log(`Downloaded to temp file: ${tempInputPath}`);
+    const fileBuffer = await downloadFromS3(s3Key);
+    await fs.writeFile(tempInputPath, fileBuffer);
+    console.log(`Downloaded to temp file: ${tempInputPath} (${fileBuffer.length} bytes)`);
 
     let command = ffmpeg(tempInputPath);
 
