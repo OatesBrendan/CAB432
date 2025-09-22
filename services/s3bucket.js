@@ -77,7 +77,15 @@ async function downloadFromS3(fileName) {
     });
 
     const response = await s3Client.send(command);
-    return response.Body;
+    
+    const chunks = [];
+    for await (const chunk of response.Body) {
+      chunks.push(chunk);
+    }
+    const buffer = Buffer.concat(chunks);
+    
+    console.log(`Downloaded ${fileName}: ${buffer.length} bytes`);
+    return buffer;
   } catch (error) {
     console.log("S3 download error:", error.message);
     throw error;
