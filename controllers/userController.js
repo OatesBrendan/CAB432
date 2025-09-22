@@ -1,5 +1,5 @@
 const Cognito = require("@aws-sdk/client-cognito-identity-provider");
-const { secretHash, userPoolId, clientId, clientSecret } = require('../middleware/authMiddleware');
+const { secretHash, userPoolId, clientId } = require('../middleware/authMiddleware');
 const path = require('path');
 const db = require('../config/db');
 
@@ -9,6 +9,8 @@ const cognitoClient = new Cognito.CognitoIdentityProviderClient({
 });
 
 exports.registerUser = async (req, res) => {
+  let connection = null;
+  
   try {
     const { username, password, email } = req.body;
     
@@ -18,7 +20,7 @@ exports.registerUser = async (req, res) => {
 
     const command = new Cognito.SignUpCommand({
       ClientId: clientId,
-      SecretHash: secretHash(clientId, clientSecret, username),
+      SecretHash: await secretHash(clientId, username), // Now async
       Username: username,
       Password: password,
       UserAttributes: [
@@ -29,16 +31,19 @@ exports.registerUser = async (req, res) => {
     const result = await cognitoClient.send(command);
     console.log('User registered in Cognito:', username);
     
-    // Store user info in your database if needed
+    // Store user info in your database
     try {
-      const connection = await db.getConnection();
+      connection = await db.getConnection();
       await connection.query(
-        'INSERT INTO users (username, email, cognito_sub, verified) VALUES (?, ?, ?, ?)',
-        [username, email, result.UserSub, 0]
+        'INSERT INTO users (username, email, cognito_sub, verified) VALUES ($1, $2, $3, $4)',
+        [username, email, result.UserSub, false]
       );
-      connection.release();
+      console.log('User stored in database:', username);
     } catch (dbError) {
       console.log('Database error (user may already exist):', dbError.message);
+      // Don't fail registration if DB insert fails - user still exists in Cognito
+    } finally {
+      if (connection) connection.release();
     }
 
     res.status(201).json({ 
@@ -48,6 +53,7 @@ exports.registerUser = async (req, res) => {
     });
 
   } catch (error) {
+    if (connection) connection.release();
     console.log('Registration error:', error);
     
     if (error.name === 'UsernameExistsException') {
@@ -63,6 +69,8 @@ exports.registerUser = async (req, res) => {
 };
 
 exports.confirmSignUp = async (req, res) => {
+  let connection = null;
+  
   try {
     const { username, confirmationCode } = req.body;
     
@@ -72,7 +80,7 @@ exports.confirmSignUp = async (req, res) => {
 
     const command = new Cognito.ConfirmSignUpCommand({
       ClientId: clientId,
-      SecretHash: secretHash(clientId, clientSecret, username),
+      SecretHash: await secretHash(clientId, username), // Now async
       Username: username,
       ConfirmationCode: confirmationCode,
     });
@@ -82,25 +90,29 @@ exports.confirmSignUp = async (req, res) => {
     
     // Update user verification status in database
     try {
-      const connection = await db.getConnection();
+      connection = await db.getConnection();
       await connection.query(
-        'UPDATE users SET verified = ? WHERE username = ?',
-        [1, username]
+        'UPDATE users SET verified = $1, updated_at = CURRENT_TIMESTAMP WHERE username = $2',
+        [true, username]
       );
-      connection.release();
     } catch (dbError) {
       console.log('Database update error:', dbError.message);
+    } finally {
+      if (connection) connection.release();
     }
 
     res.json({ message: 'Email confirmed successfully. You can now login.' });
 
   } catch (error) {
+    if (connection) connection.release();
     console.log('Confirmation error:', error);
     
     if (error.name === 'CodeMismatchException') {
       return res.status(400).json({ error: 'Invalid confirmation code' });
     } else if (error.name === 'ExpiredCodeException') {
       return res.status(400).json({ error: 'Confirmation code expired' });
+    } else if (error.name === 'NotAuthorizedException') {
+      return res.status(400).json({ error: 'User already confirmed or invalid code' });
     }
     
     res.status(500).json({ error: 'Confirmation failed' });
@@ -120,7 +132,7 @@ exports.loginUser = async (req, res) => {
       AuthParameters: {
         USERNAME: username,
         PASSWORD: password,
-        SECRET_HASH: secretHash(clientId, clientSecret, username),
+        SECRET_HASH: await secretHash(clientId, username), // Now async
       },
       ClientId: clientId,
     });
@@ -149,6 +161,8 @@ exports.loginUser = async (req, res) => {
       return res.status(401).json({ error: 'Invalid username or password' });
     } else if (error.name === 'UserNotConfirmedException') {
       return res.status(400).json({ error: 'User not confirmed. Please check your email.' });
+    } else if (error.name === 'TooManyRequestsException') {
+      return res.status(429).json({ error: 'Too many login attempts. Please try again later.' });
     }
     
     res.status(500).json({ error: 'Login failed' });
@@ -167,7 +181,7 @@ exports.refreshToken = async (req, res) => {
       AuthFlow: Cognito.AuthFlowType.REFRESH_TOKEN_AUTH,
       AuthParameters: {
         REFRESH_TOKEN: refreshToken,
-        SECRET_HASH: secretHash(clientId, clientSecret, username),
+        SECRET_HASH: await secretHash(clientId, username), // Now async
       },
       ClientId: clientId,
     });
@@ -182,72 +196,96 @@ exports.refreshToken = async (req, res) => {
 
   } catch (error) {
     console.log('Refresh token error:', error);
+    
+    if (error.name === 'NotAuthorizedException') {
+      return res.status(401).json({ error: 'Invalid refresh token' });
+    }
+    
     res.status(401).json({ error: 'Token refresh failed' });
   }
 };
 
-exports.logout = (req, res) => {
-  // With Cognito, logout is mainly handled client-side by discarding tokens
-  // You could implement global sign-out here if needed
-  console.log('User logged out');
-  res.json({ message: 'Logged out successfully' });
+exports.logout = async (req, res) => {
+  try {
+    // For more comprehensive logout, you could implement GlobalSignOut here
+    // But for basic use, client-side token removal is sufficient
+    console.log('User logged out:', req.user?.username || 'unknown');
+    res.json({ message: 'Logged out successfully' });
+  } catch (error) {
+    console.log('Logout error:', error);
+    res.status(500).json({ error: 'Logout failed' });
+  }
 };
 
 exports.getMe = async (req, res) => {
+  let connection = null;
+  
   try {
     // req.user is set by the Cognito middleware
     const userInfo = {
       username: req.user.username,
       email: req.user.email,
-      sub: req.user.sub
+      sub: req.user.sub,
+      tokenType: req.user.tokenType
     };
 
-    // Optionally fetch additional user data from your database
+    // Fetch additional user data from your database
     try {
-      const connection = await db.getConnection();
+      connection = await db.getConnection();
       const users = await connection.query(
-        'SELECT * FROM users WHERE username = ?',
+        'SELECT username, email, admin, verified, created_at FROM users WHERE username = $1',
         [req.user.username]
       );
-      connection.release();
       
       if (users.length > 0) {
         userInfo.dbData = users[0];
       }
     } catch (dbError) {
       console.log('Database fetch error:', dbError.message);
+      // Don't fail the request if DB fetch fails
+    } finally {
+      if (connection) connection.release();
     }
 
     res.json(userInfo);
   } catch (error) {
+    if (connection) connection.release();
     console.log('Get user error:', error);
     res.status(500).json({ error: 'Failed to get user information' });
   }
 };
 
 exports.getMainPage = (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+  try {
+    res.sendFile(path.join(__dirname, '..', 'public', 'index.html'));
+  } catch (error) {
+    console.log('Main page error:', error);
+    res.status(500).json({ error: 'Failed to load main page' });
+  }
 };
 
 exports.getAdminPage = async (req, res) => {
+  let connection = null;
+  
   try {
-    // Check if user is admin (you'll need to implement this logic)
-    // This could be stored in Cognito user attributes or your database
-    const connection = await db.getConnection();
+    // Check if user is admin
+    connection = await db.getConnection();
     const users = await connection.query(
-      'SELECT admin FROM users WHERE username = ?',
+      'SELECT admin FROM users WHERE username = $1',
       [req.user.username]
     );
-    connection.release();
 
     if (users.length === 0 || !users[0].admin) {
-      console.log('Unauthorized admin access:', req.user.username);
-      return res.sendStatus(403);
+      console.log('Unauthorized admin access attempt:', req.user.username);
+      return res.status(403).json({ error: 'Admin access required' });
     }
 
     res.sendFile(path.join(__dirname, '..', 'public', 'admin.html'));
+    
   } catch (error) {
     console.log('Admin page error:', error);
     res.status(500).json({ error: 'Failed to load admin page' });
+  } finally {
+    if (connection) connection.release();
   }
 };

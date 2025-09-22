@@ -5,6 +5,8 @@ const {
   PutBucketTaggingCommand,
 } = require("@aws-sdk/client-s3");
 
+const { GetObjectCommand } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const s3Client = new S3Client({ region: "ap-southeast-2" });
 const bucketName = "n11610557-videos";
 
@@ -67,4 +69,35 @@ async function uploadToS3(fileBuffer, fileName, mimeType) {
   }
 }
 
-module.exports = { uploadToS3, bucketName, createBucket };
+async function downloadFromS3(fileName) {
+  try {
+    const command = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: fileName,
+    });
+
+    const response = await s3Client.send(command);
+    return response.Body;
+  } catch (error) {
+    console.log("S3 download error:", error.message);
+    throw error;
+  }
+}
+
+async function generatePresignedUrl(fileName, expiresIn = 3600) {
+  try {
+    const command = new GetObjectCommand({
+      Bucket: bucketName,
+      Key: fileName,
+    });
+
+    const signedUrl = await getSignedUrl(s3Client, command, { expiresIn });
+    return signedUrl;
+  } catch (error) {
+    console.log("Presigned URL error:", error.message);
+    throw error;
+  }
+}
+
+
+module.exports = { uploadToS3, downloadFromS3, generatePresignedUrl, bucketName, createBucket };

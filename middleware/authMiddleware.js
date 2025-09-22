@@ -1,10 +1,44 @@
 const jwt = require("aws-jwt-verify");
 const crypto = require("crypto");
+const {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+} = require("@aws-sdk/client-secrets-manager");
 
-// Your Cognito configuration
+// Your Cognito configuration - move sensitive data to secrets
 const userPoolId = "ap-southeast-2_A3uPttUWG"; 
 const clientId = "31vh9dmicv8jgmmetpqjh5for0";
-const clientSecret = "1sujajep6v0dlrqjq14vvcg77llj761rn5p4p9asqlo3aqr3bcs3";
+
+// Cache for secrets to avoid repeated API calls
+let cachedSecrets = null;
+
+// Initialize Secrets Manager client
+const secretsClient = new SecretsManagerClient({
+  region: "ap-southeast-2",
+});
+
+async function getSecrets() {
+  if (cachedSecrets) {
+    return cachedSecrets;
+  }
+
+  const secret_name = "n11610557-secret";
+  
+  try {
+    const response = await secretsClient.send(
+      new GetSecretValueCommand({
+        SecretId: secret_name,
+        VersionStage: "AWSCURRENT",
+      })
+    );
+    
+    cachedSecrets = JSON.parse(response.SecretString);
+    return cachedSecrets;
+  } catch (error) {
+    console.error('Error retrieving secrets:', error);
+    throw error;
+  }
+}
 
 // Create JWT verifiers for Cognito tokens
 const accessVerifier = jwt.CognitoJwtVerifier.create({
@@ -19,7 +53,10 @@ const idVerifier = jwt.CognitoJwtVerifier.create({
   clientId: clientId,
 });
 
-function secretHash(clientId, clientSecret, username) {
+async function secretHash(clientId, username) {
+  const secrets = await getSecrets();
+  const clientSecret = secrets.cognitoClientSecret; // Assuming this key in your secret
+  
   const hasher = crypto.createHmac('sha256', clientSecret);
   hasher.update(`${username}${clientId}`);
   return hasher.digest('base64');
@@ -71,5 +108,5 @@ module.exports = {
   secretHash,
   userPoolId,
   clientId,
-  clientSecret
+  getSecrets
 };
