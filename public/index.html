@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Transcoding App</title>
   <style>
-    /* Basic styling */
+    /* Your existing styling stays exactly the same */
     body {
       font-family: Arial;
       max-width: 1000px;
@@ -130,15 +130,57 @@
   <div id="loginSection" class="container">
     <h1>Video Processing - Login</h1>
     <div class="login-form">
-      <div class="form-group">
-        <label for="username">Username:</label>
-        <input type="text" id="username" value="user1" required>
+      <!-- Toggle between login and signup -->
+      <div class="tabs" style="margin-bottom: 15px;">
+        <div class="tab active" onclick="showLogin()">Login</div>
+        <div class="tab" onclick="showSignup()">Sign Up</div>
+        <div class="tab" onclick="showConfirm()">Confirm Email</div>
       </div>
-      <div class="form-group">
-        <label for="password">Password:</label>
-        <input type="password" id="password" value="password123" required>
+
+      <!-- Login form -->
+      <div id="loginForm">
+        <div class="form-group">
+          <label for="username">Username:</label>
+          <input type="text" id="username" required>
+        </div>
+        <div class="form-group">
+          <label for="password">Password:</label>
+          <input type="password" id="password" required>
+        </div>
+        <button onclick="doLogin()">Login</button>
       </div>
-      <button onclick="doLogin()">Login</button>
+
+      <!-- Signup form -->
+      <div id="signupForm" class="hidden">
+        <div class="form-group">
+          <label for="signupUsername">Username:</label>
+          <input type="text" id="signupUsername" required>
+        </div>
+        <div class="form-group">
+          <label for="signupEmail">Email:</label>
+          <input type="email" id="signupEmail" required>
+        </div>
+        <div class="form-group">
+          <label for="signupPassword">Password:</label>
+          <input type="password" id="signupPassword" required>
+          <small>Must be 8+ chars with uppercase, lowercase, number & symbol</small>
+        </div>
+        <button onclick="doSignup()">Sign Up</button>
+      </div>
+
+      <!-- Confirm form -->
+      <div id="confirmForm" class="hidden">
+        <div class="form-group">
+          <label for="confirmUsername">Username:</label>
+          <input type="text" id="confirmUsername" required>
+        </div>
+        <div class="form-group">
+          <label for="confirmCode">Confirmation Code:</label>
+          <input type="text" id="confirmCode" required>
+          <small>Check your email for the 6-digit code</small>
+        </div>
+        <button onclick="doConfirm()">Confirm Email</button>
+      </div>
     </div>
     <div id="loginStatus"></div>
   </div>
@@ -225,7 +267,7 @@
 
     // Helper to call API
     async function callApi(url, method = 'GET', data = null) {
-      console.log('Calling API:', url);//
+      console.log('Calling API:', url);
       let config = { method, headers: {} };
       if (token) config.headers['Authorization'] = `Bearer ${token}`;
       
@@ -233,7 +275,6 @@
         config.headers['Content-Type'] = 'application/json';
         config.body = JSON.stringify(data);
       } else if (data instanceof FormData) {
-        // Don't set Content-Type for FormData - let browser set it with boundary
         config.body = data;
       }
       
@@ -253,25 +294,75 @@
       let el = document.getElementById(id);
       el.innerHTML = `<div class="status ${type}">${msg}</div>`;
     }
-
-    // Show file info when selected
-    function showFileInfo() {
-      const fileInput = document.getElementById('videoFile');
-      const fileInfoDiv = document.getElementById('fileInfo');
+    
+    // Fixed tab switching functions
+    function showLogin() {
+      document.querySelectorAll('#loginSection .tab').forEach(t => t.classList.remove('active'));
+      document.querySelector('#loginSection .tab:first-child').classList.add('active');
       
-      if (fileInput.files && fileInput.files[0]) {
-        const file = fileInput.files[0];
-        const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
-        fileInfoDiv.innerHTML = `
-          <div class="file-info">
-            <strong>Selected file:</strong><br>
-            Name: ${file.name}<br>
-            Size: ${fileSizeMB} MB<br>
-            Type: ${file.type}
-          </div>
-        `;
-      } else {
-        fileInfoDiv.innerHTML = '';
+      document.getElementById('loginForm').classList.remove('hidden');
+      document.getElementById('signupForm').classList.add('hidden');
+      document.getElementById('confirmForm').classList.add('hidden');
+    }
+
+    function showSignup() {
+      document.querySelectorAll('#loginSection .tab').forEach(t => t.classList.remove('active'));
+      document.querySelector('#loginSection .tab:nth-child(2)').classList.add('active');
+      
+      document.getElementById('loginForm').classList.add('hidden');
+      document.getElementById('signupForm').classList.remove('hidden');
+      document.getElementById('confirmForm').classList.add('hidden');
+    }
+
+    function showConfirm() {
+      document.querySelectorAll('#loginSection .tab').forEach(t => t.classList.remove('active'));
+      document.querySelector('#loginSection .tab:nth-child(3)').classList.add('active');
+      
+      document.getElementById('loginForm').classList.add('hidden');
+      document.getElementById('signupForm').classList.add('hidden');
+      document.getElementById('confirmForm').classList.remove('hidden');
+    }
+
+    // Signup function
+    async function doSignup() {
+      let username = document.getElementById('signupUsername').value;
+      let email = document.getElementById('signupEmail').value;
+      let password = document.getElementById('signupPassword').value;
+      
+      if (!username || !email || !password) {
+        showMsg('loginStatus', 'All fields required!', 'error');
+        return;
+      }
+      
+      try {
+        showMsg('loginStatus', 'Creating account...', 'info');
+        let data = await callApi(`${api}/users/register`, 'POST', { username, email, password });
+        showMsg('loginStatus', 'Account created! Check your email for confirmation code.', 'success');
+        document.getElementById('confirmUsername').value = username;
+        showConfirm();
+      } catch (err) {
+        showMsg('loginStatus', `Signup failed: ${err.message}`, 'error');
+      }
+    }
+
+    // Confirm function
+    async function doConfirm() {
+      let username = document.getElementById('confirmUsername').value;
+      let confirmationCode = document.getElementById('confirmCode').value;
+      
+      if (!username || !confirmationCode) {
+        showMsg('loginStatus', 'Username and code required!', 'error');
+        return;
+      }
+      
+      try {
+        showMsg('loginStatus', 'Confirming...', 'info');
+        await callApi(`${api}/users/confirm`, 'POST', { username, confirmationCode });
+        showMsg('loginStatus', 'Email confirmed! You can now login.', 'success');
+        document.getElementById('username').value = username;
+        showLogin();
+      } catch (err) {
+        showMsg('loginStatus', `Confirmation failed: ${err.message}`, 'error');
       }
     }
 
@@ -295,11 +386,30 @@
         getVideos();
         getJobs();
       } catch (err) {
-        showMsg('loginStatus', `Login failed:`, 'error');
+        showMsg('loginStatus', `Login failed: ${err.message}`, 'error');
       }
     }
 
-    // Logout
+    function showFileInfo() {
+      const fileInput = document.getElementById('videoFile');
+      const fileInfoDiv = document.getElementById('fileInfo');
+      
+      if (fileInput.files && fileInput.files[0]) {
+        const file = fileInput.files[0];
+        const fileSizeMB = (file.size / 1024 / 1024).toFixed(2);
+        fileInfoDiv.innerHTML = `
+          <div class="file-info">
+            <strong>Selected file:</strong><br>
+            Name: ${file.name}<br>
+            Size: ${fileSizeMB} MB<br>
+            Type: ${file.type}
+          </div>
+        `;
+      } else {
+        fileInfoDiv.innerHTML = '';
+      }
+    }
+
     function doLogout() {
       token = '';
       user = '';
@@ -310,20 +420,27 @@
       showMsg('loginStatus', '', 'info');
     }
 
-    // Switch tabs
+    // Fixed switchTab function
     function switchTab(tab) {
-      document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('#appSection .tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-      event.target.classList.add('active');
+      
+      const tabMap = {
+        'upload': 0,
+        'videos': 1,
+        'jobs': 2
+      };
+      
+      const tabIndex = tabMap[tab];
+      if (tabIndex !== undefined) {
+        document.querySelector(`#appSection .tab:nth-child(${tabIndex + 1})`).classList.add('active');
+      }
+      
       document.getElementById(tab + 'Tab').classList.add('active');
     }
 
-    // Upload video
     async function uploadVid() {
       const fileInput = document.getElementById('videoFile');
-      console.log('File input:', fileInput);
-      console.log('Files:', fileInput.files);
-      console.log('Files length:', fileInput.files ? fileInput.files.length : 'no files property');
       
       if (!fileInput.files || fileInput.files.length === 0) {
         showMsg('uploadStatus', 'Pick a video first!', 'error');
@@ -331,10 +448,6 @@
       }
       
       const file = fileInput.files[0];
-      console.log('Selected file:', file);
-      console.log('File name:', file.name);
-      console.log('File size:', file.size);
-      console.log('File type:', file.type);
       
       if (!file.type.startsWith('video/')) {
         showMsg('uploadStatus', 'Please select a valid video file!', 'error');
@@ -343,12 +456,6 @@
       
       const formData = new FormData();
       formData.append('videoFile', file);
-      
-      // Debug FormData
-      console.log('FormData entries:');
-      for (let pair of formData.entries()) {
-        console.log(pair[0], pair[1]);
-      }
       
       try {
         showMsg('uploadStatus', 'Uploading...', 'info');
@@ -363,7 +470,6 @@
       }
     }
 
-    // Load video list
     async function getVideos() {
       try {
         let data = await callApi(`${api}/videos`);
@@ -389,7 +495,6 @@
       }
     }
 
-    // Process video
     async function processVid() {
       let videoId = document.getElementById('videoSelect').value;
       let format = document.getElementById('format').value;
@@ -408,7 +513,6 @@
       }
     }
 
-    // Load jobs
     async function getJobs() {
       try {
         let data = await callApi(`${api}/videos/jobs`);
@@ -440,7 +544,6 @@
       }
     }
 
-    // Download video
     async function download(jobId) {
       try {
         console.log('Downloading job:', jobId);
@@ -466,7 +569,6 @@
       }
     }
 
-    // Auto-refresh jobs
     setInterval(() => {
       if (token && document.getElementById('jobsTab').classList.contains('active')) {
         console.log('Refreshing jobs...');
@@ -474,10 +576,15 @@
       }
     }, 5000);
 
-    // Enter key for login
     document.addEventListener('keypress', e => {
       if (e.key === 'Enter' && !document.getElementById('loginSection').classList.contains('hidden')) {
-        doLogin();
+        if (!document.getElementById('loginForm').classList.contains('hidden')) {
+          doLogin();
+        } else if (!document.getElementById('signupForm').classList.contains('hidden')) {
+          doSignup();
+        } else if (!document.getElementById('confirmForm').classList.contains('hidden')) {
+          doConfirm();
+        }
       }
     });
   </script>

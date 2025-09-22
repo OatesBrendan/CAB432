@@ -4,6 +4,7 @@ const { v4: uuidv4 } = require('uuid');
 const ffmpeg = require('fluent-ffmpeg');
 const ffmpegStatic = require('ffmpeg-static');
 const db = require('../config/db');
+const { uploadToS3 } = require('../services/s3bucket');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
@@ -184,13 +185,12 @@ async function processVideoAsync(inputPath, outputPath, options, jobId, connecti
 
 exports.uploadVideo = async (req, res) => {
   try {
-    console.log('Upload request');
-    
     if (!req.files || !req.files.videoFile) {
       return res.status(400).json({ error: 'No file' });
     }
 
     const videoFile = req.files.videoFile;
+
     const maxSize = 100 * 1024 * 1024;
     const allowedTypes = ['video/mp4', 'video/avi', 'video/mov', 'video/quicktime'];
 
@@ -203,29 +203,20 @@ exports.uploadVideo = async (req, res) => {
       return res.status(400).json({ error: 'Invalid file type' });
     }
 
-    const fileExt = path.extname(videoFile.name);
-    const fileName = uuidv4() + fileExt;
-    const uploadDir = path.join(__dirname, '..', 'uploads', 'videos');
-    const uploadPath = path.join(uploadDir, fileName);
-
-    console.log('Saving to:', uploadPath);
-
-    await fs.mkdir(uploadDir, { recursive: true });
-    await videoFile.mv(uploadPath);
+        const fileName = `${req.user.username}/${Date.now()}-${videoFile.name}`;
+    const s3Result = await uploadToS3(videoFile.data, fileName, videoFile.mimetype);
 
     const connection = await db.getConnection();
     const result = await connection.query(
-      'INSERT INTO videos (username, original_name, file_path, file_size, mime_type) VALUES (?, ?, ?, ?, ?)',
-      [req.user.username, videoFile.name, uploadPath, videoFile.size, videoFile.mimetype]
+      'INSERT INTO videos (username, original_name, file_size, mime_type, s3_location) VALUES (?, ?, ?, ?, ?)',
+      [req.user.username, videoFile.name, videoFile.size, videoFile.mimetype, s3Result.location]
     );
-
-    console.log('Video saved with ID:', result.insertId);
+    connection.release();
 
     res.json({ 
       message: 'Upload successful',
       videoId: result.insertId,
-      originalName: videoFile.name,
-      size: videoFile.size
+      s3Location: s3Result.location
     });
 
   } catch (err) {

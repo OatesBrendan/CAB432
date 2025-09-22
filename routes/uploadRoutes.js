@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const uploadController = require('../controllers/uploadController');
-const { authenticateToken } = require('../middleware/authMiddleware');
+const { authenticateCognitoToken } = require('../middleware/authMiddleware');
 
-router.post('/', authenticateToken, uploadController.uploadFile);
+router.post('/', authenticateCognitoToken, uploadController.uploadFile);
 
 module.exports = router;

@@ -69,6 +69,25 @@ db.serialize(() => {
     )
   `);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE NOT NULL,
+      email TEXT NOT NULL,
+      cognito_sub TEXT UNIQUE,
+      admin BOOLEAN DEFAULT 0,
+      verified BOOLEAN DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+  `);
+
+  db.run(`ALTER TABLE videos ADD COLUMN s3_location TEXT`, (err) => {
+    if (err && !err.message.includes('duplicate column name')) {
+      console.log('Error adding s3_location column:', err.message);
+    }
+  });
+
   console.log('Database tables initialized successfully');
 });
 

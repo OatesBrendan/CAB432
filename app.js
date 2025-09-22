@@ -4,6 +4,8 @@ const fileUpload = require('express-fileupload');
 
 const app = express();
 
+const { createBucket } = require('./services/s3bucket');
+createBucket().catch(console.error);
 
 app.use(express.json());
 app.use(fileUpload({

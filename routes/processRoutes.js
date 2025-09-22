@@ -1,9 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const processController = require('../controllers/processController');
-const { authenticateToken } = require('../middleware/authMiddleware');
-// Make sure user is authenticaated
-router.use(authenticateToken);
+const { authenticateCognitoToken } = require('../middleware/authMiddleware');
+
+// All routes require Cognito authentication
+router.use(authenticateCognitoToken);
 
 router.post('/upload', processController.uploadVideo);
 router.get('/', processController.getUserVideos);
