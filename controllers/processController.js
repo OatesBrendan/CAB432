@@ -156,9 +156,8 @@ async function processVideoAsync(s3Key, outputS3Key, options, jobId, connection)
         try {
           console.log(`Job ${jobId} processing complete, uploading to S3...`);
           
-          // Upload processed video back to S3
-          const processedBuffer = await fs.readFile(tempOutputPath);
-          await uploadToS3(processedBuffer, outputS3Key, `video/${options.format}`);
+          // Upload processed video back to S3 using the file path
+          await uploadToS3(tempOutputPath, outputS3Key, `video/${options.format}`);
           
           console.log(`Uploaded processed video to S3: ${outputS3Key}`);
           
@@ -180,6 +179,7 @@ async function processVideoAsync(s3Key, outputS3Key, options, jobId, connection)
           await cleanupTempFiles(tempInputPath, tempOutputPath);
         }
       })
+
       .on("error", async (err) => {
         console.log(`Job ${jobId} failed:`, err);
         try {
