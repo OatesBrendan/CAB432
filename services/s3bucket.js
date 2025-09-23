@@ -7,6 +7,7 @@ const {
 
 const { GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const fs = require('fs');
 const s3Client = new S3Client({ region: "ap-southeast-2" });
 const bucketName = "n11610557-videos";
 
