@@ -46,12 +46,12 @@ async function tagBucket() {
   }
 }
 
-async function uploadToS3(fileBuffer, fileName, mimeType) {
+async function uploadToS3(filePath, fileName, mimeType) {
   try {
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: fileName,
-      Body: fileBuffer,
+      Body: fs.createReadStream(filePath),
       ContentType: mimeType,
     });
 
@@ -68,7 +68,6 @@ async function uploadToS3(fileBuffer, fileName, mimeType) {
     throw error;
   }
 }
-
 async function downloadFromS3(fileName) {
   try {
     const command = new GetObjectCommand({
