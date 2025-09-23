@@ -550,25 +550,31 @@
         let res = await fetch(`${api}/videos/download/${jobId}`, {
           headers: { 'Authorization': `Bearer ${token}` }
         });
+        
         if (!res.ok) {
           let err = await res.json();
           throw new Error(err.error || 'Download failed');
         }
-        let filename = `video_${jobId}.mp4`;
-        let blob = await res.blob();
-        let url = window.URL.createObjectURL(blob);
+        
+        // Parse the JSON response to get the pre-signed URL
+        let data = await res.json();
+        let downloadUrl = data.downloadUrl;
+        let filename = data.filename;
+        
+        // Use the pre-signed URL directly
         let a = document.createElement('a');
-        a.href = url;
+        a.href = downloadUrl;
         a.download = filename;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
-        window.URL.revokeObjectURL(url);
+        
       } catch (err) {
         alert(`Download failed: ${err.message}`);
       }
     }
 
+    
     setInterval(() => {
       if (token && document.getElementById('jobsTab').classList.contains('active')) {
         console.log('Refreshing jobs...');
