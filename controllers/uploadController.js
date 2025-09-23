@@ -30,7 +30,7 @@ exports.uploadFile = async (req, res) => {
     
     // Upload directly to S3
     const s3Result = await uploadToS3(
-      sampleFile.data,
+      sampleFile.tempFilePath,  // Use tempFilePath instead of .data
       s3Key,
       sampleFile.mimetype
     );
