@@ -252,7 +252,7 @@ exports.uploadVideo = async (req, res) => {
     
     console.log(`Uploading to S3: ${fileName}`);
     const s3Result = await uploadToS3(
-      videoFile.data,
+      videoFile.tempFilePath,  // Use tempFilePath instead of .data
       fileName,
       videoFile.mimetype
     );
