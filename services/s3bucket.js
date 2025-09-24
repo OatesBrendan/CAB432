@@ -4,18 +4,29 @@ const {
   PutObjectCommand,
   PutBucketTaggingCommand,
 } = require("@aws-sdk/client-s3");
+const fs = require('fs');
+const { getAppParameters } = require('./parameterStore');
 
 const { GetObjectCommand } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
-const fs = require('fs');
 const s3Client = new S3Client({ region: "ap-southeast-2" });
-const bucketName = "n11610557-videos";
+
+let bucketName;
+
+async function initializeBucketName() {
+  if (!bucketName) {
+    const params = await getAppParameters();
+    bucketName = params['/n11610557/s3-bucket'];
+  }
+  return bucketName;
+}
 
 async function createBucket() {
   try {
+    await initializeBucketName();
     const command = new CreateBucketCommand({ Bucket: bucketName });
     await s3Client.send(command);
-    console.log('Bucket ${bucketName} created');
+    console.log(`Bucket ${bucketName} created`);
 
     await tagBucket();
   } catch (error) {
@@ -29,6 +40,7 @@ async function createBucket() {
 }
 
 async function tagBucket() {
+  await initializeBucketName();
   const command = new PutBucketTaggingCommand({
     Bucket: bucketName,
     Tagging: {
@@ -49,6 +61,7 @@ async function tagBucket() {
 
 async function uploadToS3(filePath, fileName, mimeType) {
   try {
+    await initializeBucketName();
     const command = new PutObjectCommand({
       Bucket: bucketName,
       Key: fileName,
@@ -71,6 +84,7 @@ async function uploadToS3(filePath, fileName, mimeType) {
 }
 async function downloadFromS3(fileName) {
   try {
+    await initializeBucketName();
     const command = new GetObjectCommand({
       Bucket: bucketName,
       Key: fileName,
@@ -94,6 +108,7 @@ async function downloadFromS3(fileName) {
 
 async function generatePresignedUrl(fileName, expiresIn = 3600) {
   try {
+    await initializeBucketName();
     const command = new GetObjectCommand({
       Bucket: bucketName,
       Key: fileName,
