@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Video Transcoding App</title>
   <style>
-    /* Your existing styling stays exactly the same */
     body {
       font-family: Arial;
       max-width: 1000px;
@@ -123,6 +122,9 @@
       border-radius: 4px;
       border: 1px solid #dee2e6;
     }
+    #mfaQRCode {
+      margin: 10px 0;
+    }
   </style>
 </head>
 <body>
@@ -130,11 +132,12 @@
   <div id="loginSection" class="container">
     <h1>Video Processing - Login</h1>
     <div class="login-form">
-      <!-- Toggle between login and signup -->
+      <!-- Toggle between login, signup, confirm, and MFA setup -->
       <div class="tabs" style="margin-bottom: 15px;">
         <div class="tab active" onclick="showLogin()">Login</div>
         <div class="tab" onclick="showSignup()">Sign Up</div>
         <div class="tab" onclick="showConfirm()">Confirm Email</div>
+        <div class="tab" onclick="showMFA()">MFA Setup</div>
       </div>
 
       <!-- Login form -->
@@ -180,6 +183,20 @@
           <small>Check your email for the 6-digit code</small>
         </div>
         <button onclick="doConfirm()">Confirm Email</button>
+      </div>
+
+      <!-- MFA setup form -->
+      <div id="mfaForm" class="hidden">
+        <div class="form-group">
+          <label>Setup Multi-Factor Authentication</label>
+          <p>After clicking "Setup MFA", scan the QR code or enter the secret in your authenticator app (e.g., Google Authenticator).</p>
+          <div id="mfaQRCode"></div>
+          <div class="form-group">
+            <label for="mfaCode">TOTP Code:</label>
+            <input type="text" id="mfaCode" placeholder="Enter 6-digit code">
+          </div>
+          <button onclick="setupMFA()">Setup MFA</button>
+        </div>
       </div>
     </div>
     <div id="loginStatus"></div>
@@ -262,6 +279,7 @@
   <script>
     // Global vars
     let token = '';
+    let accessToken = ''; // Store access token for MFA
     let user = '';
     const api = '/api';
 
@@ -295,7 +313,7 @@
       el.innerHTML = `<div class="status ${type}">${msg}</div>`;
     }
     
-    // Fixed tab switching functions
+    // Tab switching functions
     function showLogin() {
       document.querySelectorAll('#loginSection .tab').forEach(t => t.classList.remove('active'));
       document.querySelector('#loginSection .tab:first-child').classList.add('active');
@@ -303,6 +321,7 @@
       document.getElementById('loginForm').classList.remove('hidden');
       document.getElementById('signupForm').classList.add('hidden');
       document.getElementById('confirmForm').classList.add('hidden');
+      document.getElementById('mfaForm').classList.add('hidden');
     }
 
     function showSignup() {
@@ -312,6 +331,7 @@
       document.getElementById('loginForm').classList.add('hidden');
       document.getElementById('signupForm').classList.remove('hidden');
       document.getElementById('confirmForm').classList.add('hidden');
+      document.getElementById('mfaForm').classList.add('hidden');
     }
 
     function showConfirm() {
@@ -321,6 +341,17 @@
       document.getElementById('loginForm').classList.add('hidden');
       document.getElementById('signupForm').classList.add('hidden');
       document.getElementById('confirmForm').classList.remove('hidden');
+      document.getElementById('mfaForm').classList.add('hidden');
+    }
+
+    function showMFA() {
+      document.querySelectorAll('#loginSection .tab').forEach(t => t.classList.remove('active'));
+      document.querySelector('#loginSection .tab:nth-child(4)').classList.add('active');
+      
+      document.getElementById('loginForm').classList.add('hidden');
+      document.getElementById('signupForm').classList.add('hidden');
+      document.getElementById('confirmForm').classList.add('hidden');
+      document.getElementById('mfaForm').classList.remove('hidden');
     }
 
     // Signup function
@@ -366,7 +397,7 @@
       }
     }
 
-    // Login function
+    // Login function with MFA support
     async function doLogin() {
       let username = document.getElementById('username').value;
       let password = document.getElementById('password').value;
@@ -377,16 +408,67 @@
       try {
         showMsg('loginStatus', 'Logging in...', 'info');
         let data = await callApi(`${api}/users/login`, 'POST', { username, password });
-        token = data.authToken;
-        user = username;
-        showMsg('loginStatus', 'Logged in!', 'success');
-        document.getElementById('loginSection').classList.add('hidden');
-        document.getElementById('appSection').classList.remove('hidden');
-        document.getElementById('currentUser').textContent = user;
-        getVideos();
-        getJobs();
+        
+        // Handle MFA challenge
+        if (data.challengeName === 'SOFTWARE_TOKEN_MFA') {
+          let mfaCode = prompt('Enter your MFA code from your authenticator app:');
+          if (!mfaCode) {
+            showMsg('loginStatus', 'MFA code required!', 'error');
+            return;
+          }
+          let mfaData = await callApi(`${api}/users/respond-mfa`, 'POST', {
+            username,
+            session: data.session,
+            mfaCode
+          });
+          token = mfaData.authToken;
+          accessToken = mfaData.tokens.accessToken;
+          user = username;
+          showMsg('loginStatus', 'MFA login successful!', 'success');
+          document.getElementById('loginSection').classList.add('hidden');
+          document.getElementById('appSection').classList.remove('hidden');
+          document.getElementById('currentUser').textContent = user;
+          getVideos();
+          getJobs();
+        } else {
+          // Normal login
+          token = data.authToken;
+          accessToken = data.tokens.accessToken;
+          user = username;
+          showMsg('loginStatus', 'Logged in!', 'success');
+          document.getElementById('loginSection').classList.add('hidden');
+          document.getElementById('appSection').classList.remove('hidden');
+          document.getElementById('currentUser').textContent = user;
+          getVideos();
+          getJobs();
+        }
       } catch (err) {
         showMsg('loginStatus', `Login failed: ${err.message}`, 'error');
+      }
+    }
+
+    // MFA setup function
+    async function setupMFA() {
+      try {
+        showMsg('loginStatus', 'Setting up MFA...', 'info');
+        let data = await callApi(`${api}/users/setup-mfa`, 'POST');
+        document.getElementById('mfaQRCode').innerHTML = `
+          <p>Scan this code in your authenticator app (e.g., Google Authenticator):</p>
+          <p><strong>${data.secretCode}</strong></p>
+          ${data.qrCodeUrl ? `<img src="${data.qrCodeUrl}" alt="MFA QR Code">` : ''}
+        `;
+        let mfaCode = document.getElementById('mfaCode').value;
+        if (!mfaCode) {
+          showMsg('loginStatus', 'Enter the TOTP code from your app and click Setup MFA again.', 'info');
+          return;
+        }
+        await callApi(`${api}/users/verify-mfa`, 'POST', { userCode: mfaCode });
+        showMsg('loginStatus', 'MFA enabled successfully! Use your authenticator app for future logins.', 'success');
+        document.getElementById('mfaCode').value = '';
+        document.getElementById('mfaQRCode').innerHTML = '';
+        showLogin();
+      } catch (err) {
+        showMsg('loginStatus', `MFA setup failed: ${err.message}`, 'error');
       }
     }
 
@@ -412,6 +494,7 @@
 
     function doLogout() {
       token = '';
+      accessToken = '';
       user = '';
       document.getElementById('loginSection').classList.remove('hidden');
       document.getElementById('appSection').classList.add('hidden');
@@ -420,7 +503,6 @@
       showMsg('loginStatus', '', 'info');
     }
 
-    // Fixed switchTab function
     function switchTab(tab) {
       document.querySelectorAll('#appSection .tab').forEach(t => t.classList.remove('active'));
       document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
@@ -556,12 +638,10 @@
           throw new Error(err.error || 'Download failed');
         }
         
-        // Parse the JSON response to get the pre-signed URL
         let data = await res.json();
         let downloadUrl = data.downloadUrl;
         let filename = data.filename;
         
-        // Use the pre-signed URL directly
         let a = document.createElement('a');
         a.href = downloadUrl;
         a.download = filename;
@@ -574,7 +654,6 @@
       }
     }
 
-    
     setInterval(() => {
       if (token && document.getElementById('jobsTab').classList.contains('active')) {
         console.log('Refreshing jobs...');
@@ -590,6 +669,8 @@
           doSignup();
         } else if (!document.getElementById('confirmForm').classList.contains('hidden')) {
           doConfirm();
+        } else if (!document.getElementById('mfaForm').classList.contains('hidden')) {
+          setupMFA();
         }
       }
     });

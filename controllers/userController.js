@@ -2,6 +2,7 @@ const Cognito = require("@aws-sdk/client-cognito-identity-provider");
 const { secretHash, userPoolId, clientId } = require('../middleware/authMiddleware');
 const path = require('path');
 const db = require('../config/db');
+const { AssociateSoftwareTokenCommand, VerifySoftwareTokenCommand, SetUserMFAPreferenceCommand, RespondToAuthChallengeCommand } = require("@aws-sdk/client-cognito-identity-provider");
 
 // Initialize Cognito client
 const cognitoClient = new Cognito.CognitoIdentityProviderClient({
@@ -20,7 +21,7 @@ exports.registerUser = async (req, res) => {
 
     const command = new Cognito.SignUpCommand({
       ClientId: clientId,
-      SecretHash: await secretHash(clientId, username), // Now async
+      SecretHash: await secretHash(clientId, username),
       Username: username,
       Password: password,
       UserAttributes: [
@@ -41,7 +42,6 @@ exports.registerUser = async (req, res) => {
       console.log('User stored in database:', username);
     } catch (dbError) {
       console.log('Database error (user may already exist):', dbError.message);
-      // Don't fail registration if DB insert fails - user still exists in Cognito
     } finally {
       if (connection) connection.release();
     }
@@ -80,7 +80,7 @@ exports.confirmSignUp = async (req, res) => {
 
     const command = new Cognito.ConfirmSignUpCommand({
       ClientId: clientId,
-      SecretHash: await secretHash(clientId, username), // Now async
+      SecretHash: await secretHash(clientId, username),
       Username: username,
       ConfirmationCode: confirmationCode,
     });
@@ -132,15 +132,24 @@ exports.loginUser = async (req, res) => {
       AuthParameters: {
         USERNAME: username,
         PASSWORD: password,
-        SECRET_HASH: await secretHash(clientId, username), // Now async
+        SECRET_HASH: await secretHash(clientId, username),
       },
       ClientId: clientId,
     });
 
     const result = await cognitoClient.send(command);
-    console.log('Login success:', username);
+    console.log('Login attempt:', username);
 
-    // Return both ID and Access tokens
+    // Handle MFA challenge
+    if (result.ChallengeName === 'SOFTWARE_TOKEN_MFA') {
+      return res.json({
+        message: 'MFA code required',
+        session: result.Session,
+        challengeName: result.ChallengeName
+      });
+    }
+
+    // Normal login success
     const tokens = {
       idToken: result.AuthenticationResult.IdToken,
       accessToken: result.AuthenticationResult.AccessToken,
@@ -150,7 +159,6 @@ exports.loginUser = async (req, res) => {
     res.json({ 
       message: 'Login successful',
       tokens: tokens,
-      // For backward compatibility, return idToken as authToken
       authToken: tokens.idToken
     });
 
@@ -169,6 +177,101 @@ exports.loginUser = async (req, res) => {
   }
 };
 
+exports.respondToMFAChallenge = async (req, res) => {
+  try {
+    const { username, session, mfaCode } = req.body;
+    if (!username || !session || !mfaCode) {
+      return res.status(400).json({ error: 'Username, session, and MFA code required' });
+    }
+
+    const command = new RespondToAuthChallengeCommand({
+      ClientId: clientId,
+      ChallengeName: 'SOFTWARE_TOKEN_MFA',
+      Session: session,
+      ChallengeResponses: {
+        USERNAME: username,
+        SOFTWARE_TOKEN_MFA_CODE: mfaCode,
+        SECRET_HASH: await secretHash(clientId, username)
+      }
+    });
+
+    const result = await cognitoClient.send(command);
+
+    const tokens = {
+      idToken: result.AuthenticationResult.IdToken,
+      accessToken: result.AuthenticationResult.AccessToken,
+      refreshToken: result.AuthenticationResult.RefreshToken
+    };
+
+    res.json({
+      message: 'MFA login successful',
+      tokens: tokens,
+      authToken: tokens.idToken
+    });
+  } catch (error) {
+    console.log('MFA challenge error:', error);
+    if (error.name === 'CodeMismatchException') {
+      return res.status(400).json({ error: 'Invalid MFA code' });
+    }
+    res.status(500).json({ error: 'MFA login failed' });
+  }
+};
+
+exports.setupMFA = async (req, res) => {
+  try {
+    // Ensure user is authenticated
+    if (!req.user || !req.user.accessToken) {
+      return res.status(401).json({ error: 'Authentication required' });
+    }
+
+    // Generate TOTP secret
+    const associateCommand = new AssociateSoftwareTokenCommand({
+      AccessToken: req.user.accessToken
+    });
+    const associateResponse = await cognitoClient.send(associateCommand);
+
+    res.json({
+      message: 'Scan this secret in your authenticator app (e.g., Google Authenticator)',
+      secretCode: associateResponse.SecretCode
+    });
+  } catch (error) {
+    console.log('MFA setup error:', error);
+    res.status(500).json({ error: 'Failed to setup MFA' });
+  }
+};
+
+exports.verifyMFA = async (req, res) => {
+  try {
+    const { userCode } = req.body;
+    if (!req.user || !req.user.accessToken || !userCode) {
+      return res.status(400).json({ error: 'Access token and TOTP code required' });
+    }
+
+    // Verify TOTP code
+    const verifyCommand = new VerifySoftwareTokenCommand({
+      AccessToken: req.user.accessToken,
+      UserCode: userCode
+    });
+    const verifyResponse = await cognitoClient.send(verifyCommand);
+
+    if (verifyResponse.Status !== 'SUCCESS') {
+      return res.status(400).json({ error: 'Invalid TOTP code' });
+    }
+
+    // Enable MFA for the user
+    const setPrefCommand = new SetUserMFAPreferenceCommand({
+      AccessToken: req.user.accessToken,
+      SoftwareTokenMfaSettings: { Enabled: true, PreferredMfa: true }
+    });
+    await cognitoClient.send(setPrefCommand);
+
+    res.json({ message: 'MFA enabled successfully' });
+  } catch (error) {
+    console.log('MFA verify error:', error);
+    res.status(500).json({ error: 'MFA verification failed' });
+  }
+};
+
 exports.refreshToken = async (req, res) => {
   try {
     const { refreshToken, username } = req.body;
@@ -181,7 +284,7 @@ exports.refreshToken = async (req, res) => {
       AuthFlow: Cognito.AuthFlowType.REFRESH_TOKEN_AUTH,
       AuthParameters: {
         REFRESH_TOKEN: refreshToken,
-        SECRET_HASH: await secretHash(clientId, username), // Now async
+        SECRET_HASH: await secretHash(clientId, username),
       },
       ClientId: clientId,
     });
@@ -191,7 +294,7 @@ exports.refreshToken = async (req, res) => {
     res.json({
       idToken: result.AuthenticationResult.IdToken,
       accessToken: result.AuthenticationResult.AccessToken,
-      authToken: result.AuthenticationResult.IdToken // For compatibility
+      authToken: result.AuthenticationResult.IdToken
     });
 
   } catch (error) {
@@ -207,8 +310,6 @@ exports.refreshToken = async (req, res) => {
 
 exports.logout = async (req, res) => {
   try {
-    // For more comprehensive logout, you could implement GlobalSignOut here
-    // But for basic use, client-side token removal is sufficient
     console.log('User logged out:', req.user?.username || 'unknown');
     res.json({ message: 'Logged out successfully' });
   } catch (error) {
@@ -221,7 +322,6 @@ exports.getMe = async (req, res) => {
   let connection = null;
   
   try {
-    // req.user is set by the Cognito middleware
     const userInfo = {
       username: req.user.username,
       email: req.user.email,
@@ -229,7 +329,6 @@ exports.getMe = async (req, res) => {
       tokenType: req.user.tokenType
     };
 
-    // Fetch additional user data from your database
     try {
       connection = await db.getConnection();
       const users = await connection.query(
@@ -242,7 +341,6 @@ exports.getMe = async (req, res) => {
       }
     } catch (dbError) {
       console.log('Database fetch error:', dbError.message);
-      // Don't fail the request if DB fetch fails
     } finally {
       if (connection) connection.release();
     }
@@ -268,7 +366,6 @@ exports.getAdminPage = async (req, res) => {
   let connection = null;
   
   try {
-    // Check if user is admin
     connection = await db.getConnection();
     const users = await connection.query(
       'SELECT admin FROM users WHERE username = $1',
@@ -289,3 +386,5 @@ exports.getAdminPage = async (req, res) => {
     if (connection) connection.release();
   }
 };
+
+module.exports = exports;
