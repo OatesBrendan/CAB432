@@ -1,4 +1,5 @@
 const { Pool } = require('pg');
+const { getAppParameters } = require('../services/parameterStore');
 const {
   SecretsManagerClient,
   GetSecretValueCommand,
@@ -33,10 +34,13 @@ async function getSecrets() {
 async function initializePool() {
   try {
     const secrets = await getSecrets();
+
+    const params = await getAppParameters();
+    const dbHost = params['/n11610557/database-host'];
     
     // PostgreSQL connection configuration using secrets
     pool = new Pool({
-      host: 'database-1-instance-1.ce2haupt2cta.ap-southeast-2.rds.amazonaws.com',
+      host: dbHost,
       port: 5432,
       database: 'cohort_2025',
       user: secrets.username, // From Secrets Manager
