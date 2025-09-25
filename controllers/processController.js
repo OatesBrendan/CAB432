@@ -5,6 +5,7 @@ const ffmpeg = require("fluent-ffmpeg");
 const ffmpegStatic = require("ffmpeg-static");
 const db = require("../config/db");
 const { uploadToS3, downloadFromS3, generatePresignedUrl } = require("../services/s3bucket");
+const { storeJobMetadata } = require('../services/dynamoService');
 
 ffmpeg.setFfmpegPath(ffmpegStatic);
 
@@ -57,6 +58,20 @@ exports.processVideo = async (req, res) => {
     );
 
     console.log("Created job " + outputId);
+
+    try {
+      const jobMetadata = {
+        originalFilename: video.original_name,
+        format: processFormat,
+        resolution: processResolution,
+        fileSize: video.file_size
+      };
+      
+      await storeJobMetadata(outputId, req.user.username, jobMetadata);
+      console.log('📝 Job metadata stored in DynamoDB:', outputId);
+    } catch (dynamoError) {
+      console.log('DynamoDB job metadata store failed (continuing anyway):', dynamoError.message);
+    }
 
     // Start processing in background
     processVideoAsync(

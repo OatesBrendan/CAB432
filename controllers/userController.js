@@ -4,6 +4,8 @@ const path = require('path');
 const db = require('../config/db');
 const { AssociateSoftwareTokenCommand, VerifySoftwareTokenCommand, SetUserMFAPreferenceCommand, RespondToAuthChallengeCommand } = require("@aws-sdk/client-cognito-identity-provider");
 const QRCode = require('qrcode');
+
+const { storeUserSession, updateUserActivity, getUserSessions } = require('../services/dynamoService');
 // Initialize Cognito client
 const cognitoClient = new Cognito.CognitoIdentityProviderClient({
   region: "ap-southeast-2",
@@ -155,6 +157,23 @@ exports.loginUser = async (req, res) => {
       accessToken: result.AuthenticationResult.AccessToken,
       refreshToken: result.AuthenticationResult.RefreshToken
     };
+
+    // 🆕 NEW: Store login session in DynamoDB
+    try {
+      const sessionData = {
+        preferences: {
+          defaultFormat: 'mp4',
+          defaultResolution: '720p'
+        },
+        deviceInfo: req.headers['user-agent'] || 'unknown'
+      };
+      
+      const sessionId = await storeUserSession(username, sessionData);
+      console.log('📝 User session stored in DynamoDB:', sessionId);
+    } catch (dynamoError) {
+      // Don't fail login if DynamoDB fails - just log it
+      console.log('DynamoDB session store failed (continuing anyway):', dynamoError.message);
+    }
 
     res.json({ 
       message: 'Login successful',
@@ -386,6 +405,22 @@ exports.getAdminPage = async (req, res) => {
     res.status(500).json({ error: 'Failed to load admin page' });
   } finally {
     if (connection) connection.release();
+  }
+};
+
+exports.getUserSessions = async (req, res) => {
+  try {
+    const sessions = await getUserSessions(req.user.username);
+    
+    res.json({ 
+      username: req.user.username,
+      activeSessions: sessions,
+      message: `Found ${sessions.length} active sessions in DynamoDB`
+    });
+    
+  } catch (error) {
+    console.log('Get sessions error:', error);
+    res.status(500).json({ error: 'Failed to get sessions' });
   }
 };
 
