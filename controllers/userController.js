@@ -3,7 +3,7 @@ const { secretHash, userPoolId, clientId } = require('../middleware/authMiddlewa
 const path = require('path');
 const db = require('../config/db');
 const { AssociateSoftwareTokenCommand, VerifySoftwareTokenCommand, SetUserMFAPreferenceCommand, RespondToAuthChallengeCommand } = require("@aws-sdk/client-cognito-identity-provider");
-
+const QRCode = require('qrcode');
 // Initialize Cognito client
 const cognitoClient = new Cognito.CognitoIdentityProviderClient({
   region: "ap-southeast-2",
@@ -217,22 +217,24 @@ exports.respondToMFAChallenge = async (req, res) => {
   }
 };
 
+
 exports.setupMFA = async (req, res) => {
   try {
-    // Ensure user is authenticated
     if (!req.user || !req.user.accessToken) {
       return res.status(401).json({ error: 'Authentication required' });
     }
-
-    // Generate TOTP secret
     const associateCommand = new AssociateSoftwareTokenCommand({
       AccessToken: req.user.accessToken
     });
     const associateResponse = await cognitoClient.send(associateCommand);
-
+    const qrCodeUrl = await QRCode.toDataURL(`otpauth://totp/${req.user.username}?secret=${associateResponse.SecretCode}`).catch(err => {
+      console.log('QR code generation error:', err);
+      return null;
+    });
     res.json({
-      message: 'Scan this secret in your authenticator app (e.g., Google Authenticator)',
-      secretCode: associateResponse.SecretCode
+      message: 'Scan this QR code in your authenticator app',
+      secretCode: associateResponse.SecretCode,
+      qrCodeUrl
     });
   } catch (error) {
     console.log('MFA setup error:', error);

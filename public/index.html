@@ -132,12 +132,11 @@
   <div id="loginSection" class="container">
     <h1>Video Processing - Login</h1>
     <div class="login-form">
-      <!-- Toggle between login, signup, confirm, and MFA setup -->
+      <!-- Toggle between login, signup, confirm -->
       <div class="tabs" style="margin-bottom: 15px;">
         <div class="tab active" onclick="showLogin()">Login</div>
         <div class="tab" onclick="showSignup()">Sign Up</div>
         <div class="tab" onclick="showConfirm()">Confirm Email</div>
-        <div class="tab" onclick="showMFA()">MFA Setup</div>
       </div>
 
       <!-- Login form -->
@@ -185,18 +184,14 @@
         <button onclick="doConfirm()">Confirm Email</button>
       </div>
 
-      <!-- MFA setup form -->
-      <div id="mfaForm" class="hidden">
+      <!-- MFA login form -->
+      <div id="mfaLoginForm" class="hidden">
         <div class="form-group">
-          <label>Setup Multi-Factor Authentication</label>
-          <p>After clicking "Setup MFA", scan the QR code or enter the secret in your authenticator app (e.g., Google Authenticator).</p>
-          <div id="mfaQRCode"></div>
-          <div class="form-group">
-            <label for="mfaCode">TOTP Code:</label>
-            <input type="text" id="mfaCode" placeholder="Enter 6-digit code">
-          </div>
-          <button onclick="setupMFA()">Setup MFA</button>
+          <label for="mfaLoginCode">MFA Code:</label>
+          <input type="text" id="mfaLoginCode" placeholder="Enter 6-digit code from authenticator app">
+          <small>Enter the code from your authenticator app (e.g., Google Authenticator).</small>
         </div>
+        <button onclick="submitMFA()">Submit MFA Code</button>
       </div>
     </div>
     <div id="loginStatus"></div>
@@ -216,6 +211,7 @@
         <div class="tab active" onclick="switchTab('upload')">Upload & Process</div>
         <div class="tab" onclick="switchTab('videos')">My Videos</div>
         <div class="tab" onclick="switchTab('jobs')">Jobs</div>
+        <div class="tab" onclick="switchTab('mfa')">MFA Setup</div>
       </div>
 
       <!-- Upload tab -->
@@ -273,21 +269,37 @@
         <button onclick="getJobs()" class="btn-success">Refresh</button>
         <div id="jobsList"></div>
       </div>
+
+      <!-- MFA setup tab -->
+      <div id="mfaTab" class="tab-content">
+        <h3>Setup Multi-Factor Authentication</h3>
+        <div class="form-group">
+          <p>Click "Setup MFA" to generate a code for your authenticator app (e.g., Google Authenticator). Scan it, then enter the 6-digit code and click again to enable MFA.</p>
+          <div id="mfaQRCode"></div>
+          <div class="form-group">
+            <label for="mfaCode">TOTP Code:</label>
+            <input type="text" id="mfaCode" placeholder="Enter 6-digit code">
+          </div>
+          <button onclick="setupMFA()">Setup MFA</button>
+        </div>
+        <div id="mfaStatus"></div>
+      </div>
     </div>
   </div>
 
-  <script>
+ <script>
     // Global vars
     let token = '';
-    let accessToken = ''; // Store access token for MFA
+    let accessToken = '';
     let user = '';
+    let mfaSession = '';
     const api = '/api';
 
     // Helper to call API
-    async function callApi(url, method = 'GET', data = null) {
+    async function callApi(url, method = 'GET', data = null, customToken = token) {
       console.log('Calling API:', url);
       let config = { method, headers: {} };
-      if (token) config.headers['Authorization'] = `Bearer ${token}`;
+      if (customToken) config.headers['Authorization'] = `Bearer ${customToken}`;
       
       if (data && !(data instanceof FormData)) {
         config.headers['Content-Type'] = 'application/json';
@@ -313,7 +325,7 @@
       el.innerHTML = `<div class="status ${type}">${msg}</div>`;
     }
     
-    // Tab switching functions
+    // Tab switching functions for login section
     function showLogin() {
       document.querySelectorAll('#loginSection .tab').forEach(t => t.classList.remove('active'));
       document.querySelector('#loginSection .tab:first-child').classList.add('active');
@@ -321,7 +333,7 @@
       document.getElementById('loginForm').classList.remove('hidden');
       document.getElementById('signupForm').classList.add('hidden');
       document.getElementById('confirmForm').classList.add('hidden');
-      document.getElementById('mfaForm').classList.add('hidden');
+      document.getElementById('mfaLoginForm').classList.add('hidden');
     }
 
     function showSignup() {
@@ -331,7 +343,7 @@
       document.getElementById('loginForm').classList.add('hidden');
       document.getElementById('signupForm').classList.remove('hidden');
       document.getElementById('confirmForm').classList.add('hidden');
-      document.getElementById('mfaForm').classList.add('hidden');
+      document.getElementById('mfaLoginForm').classList.add('hidden');
     }
 
     function showConfirm() {
@@ -341,17 +353,15 @@
       document.getElementById('loginForm').classList.add('hidden');
       document.getElementById('signupForm').classList.add('hidden');
       document.getElementById('confirmForm').classList.remove('hidden');
-      document.getElementById('mfaForm').classList.add('hidden');
+      document.getElementById('mfaLoginForm').classList.add('hidden');
     }
 
-    function showMFA() {
+    function showMFALogin() {
       document.querySelectorAll('#loginSection .tab').forEach(t => t.classList.remove('active'));
-      document.querySelector('#loginSection .tab:nth-child(4)').classList.add('active');
-      
       document.getElementById('loginForm').classList.add('hidden');
       document.getElementById('signupForm').classList.add('hidden');
       document.getElementById('confirmForm').classList.add('hidden');
-      document.getElementById('mfaForm').classList.remove('hidden');
+      document.getElementById('mfaLoginForm').classList.remove('hidden');
     }
 
     // Signup function
@@ -397,7 +407,7 @@
       }
     }
 
-    // Login function with MFA support
+    // Login function - ONLY CHANGE: store accessToken properly
     async function doLogin() {
       let username = document.getElementById('username').value;
       let password = document.getElementById('password').value;
@@ -409,31 +419,13 @@
         showMsg('loginStatus', 'Logging in...', 'info');
         let data = await callApi(`${api}/users/login`, 'POST', { username, password });
         
-        // Handle MFA challenge
         if (data.challengeName === 'SOFTWARE_TOKEN_MFA') {
-          let mfaCode = prompt('Enter your MFA code from your authenticator app:');
-          if (!mfaCode) {
-            showMsg('loginStatus', 'MFA code required!', 'error');
-            return;
-          }
-          let mfaData = await callApi(`${api}/users/respond-mfa`, 'POST', {
-            username,
-            session: data.session,
-            mfaCode
-          });
-          token = mfaData.authToken;
-          accessToken = mfaData.tokens.accessToken;
-          user = username;
-          showMsg('loginStatus', 'MFA login successful!', 'success');
-          document.getElementById('loginSection').classList.add('hidden');
-          document.getElementById('appSection').classList.remove('hidden');
-          document.getElementById('currentUser').textContent = user;
-          getVideos();
-          getJobs();
+          mfaSession = data.session;
+          showMFALogin();
+          showMsg('loginStatus', 'Please enter your MFA code.', 'info');
         } else {
-          // Normal login
           token = data.authToken;
-          accessToken = data.tokens.accessToken;
+          accessToken = data.tokens.accessToken; // CRITICAL: store this properly
           user = username;
           showMsg('loginStatus', 'Logged in!', 'success');
           document.getElementById('loginSection').classList.add('hidden');
@@ -447,28 +439,59 @@
       }
     }
 
-    // MFA setup function
+    // Submit MFA code during login - ONLY CHANGE: store accessToken properly
+    async function submitMFA() {
+      let mfaCode = document.getElementById('mfaLoginCode').value;
+      if (!mfaCode) {
+        showMsg('loginStatus', 'MFA code required!', 'error');
+        return;
+      }
+      try {
+        let data = await callApi(`${api}/users/respond-mfa`, 'POST', {
+          username: document.getElementById('username').value,
+          session: mfaSession,
+          mfaCode
+        });
+        token = data.authToken;
+        accessToken = data.tokens.accessToken; // CRITICAL: store this properly
+        user = document.getElementById('username').value;
+        showMsg('loginStatus', 'MFA login successful!', 'success');
+        document.getElementById('mfaLoginForm').classList.add('hidden');
+        document.getElementById('loginSection').classList.add('hidden');
+        document.getElementById('appSection').classList.remove('hidden');
+        document.getElementById('currentUser').textContent = user;
+        getVideos();
+        getJobs();
+      } catch (err) {
+        showMsg('loginStatus', `MFA login failed: ${err.message}`, 'error');
+      }
+    }
+
+    // SIMPLIFIED MFA setup function - just basic two-step process
     async function setupMFA() {
       try {
-        showMsg('loginStatus', 'Setting up MFA...', 'info');
-        let data = await callApi(`${api}/users/setup-mfa`, 'POST');
-        document.getElementById('mfaQRCode').innerHTML = `
-          <p>Scan this code in your authenticator app (e.g., Google Authenticator):</p>
-          <p><strong>${data.secretCode}</strong></p>
-          ${data.qrCodeUrl ? `<img src="${data.qrCodeUrl}" alt="MFA QR Code">` : ''}
-        `;
         let mfaCode = document.getElementById('mfaCode').value;
+        
         if (!mfaCode) {
-          showMsg('loginStatus', 'Enter the TOTP code from your app and click Setup MFA again.', 'info');
-          return;
+          // Step 1: Get QR code
+          showMsg('mfaStatus', 'Setting up MFA...', 'info');
+          let data = await callApi(`${api}/users/setup-mfa`, 'POST', null, accessToken);
+          document.getElementById('mfaQRCode').innerHTML = `
+            <p>Scan this QR code in your authenticator app:</p>
+            ${data.qrCodeUrl ? `<img src="${data.qrCodeUrl}" alt="MFA QR Code">` : ''}
+            <p><strong>Secret Code:</strong> ${data.secretCode}</p>
+            <p>After scanning, enter the 6-digit code below and click Setup MFA again.</p>
+          `;
+          showMsg('mfaStatus', 'Scan the QR code, then enter the code from your app.', 'info');
+        } else {
+          // Step 2: Verify code
+          await callApi(`${api}/users/verify-mfa`, 'POST', { userCode: mfaCode }, accessToken);
+          showMsg('mfaStatus', 'MFA enabled successfully!', 'success');
+          document.getElementById('mfaCode').value = '';
+          document.getElementById('mfaQRCode').innerHTML = '';
         }
-        await callApi(`${api}/users/verify-mfa`, 'POST', { userCode: mfaCode });
-        showMsg('loginStatus', 'MFA enabled successfully! Use your authenticator app for future logins.', 'success');
-        document.getElementById('mfaCode').value = '';
-        document.getElementById('mfaQRCode').innerHTML = '';
-        showLogin();
       } catch (err) {
-        showMsg('loginStatus', `MFA setup failed: ${err.message}`, 'error');
+        showMsg('mfaStatus', `MFA setup failed: ${err.message}`, 'error');
       }
     }
 
@@ -496,11 +519,22 @@
       token = '';
       accessToken = '';
       user = '';
+      mfaSession = '';
       document.getElementById('loginSection').classList.remove('hidden');
       document.getElementById('appSection').classList.add('hidden');
       document.getElementById('username').value = '';
       document.getElementById('password').value = '';
+      if (document.getElementById('mfaLoginCode')) {
+        document.getElementById('mfaLoginCode').value = '';
+      }
+      if (document.getElementById('mfaCode')) {
+        document.getElementById('mfaCode').value = '';
+      }
+      if (document.getElementById('mfaQRCode')) {
+        document.getElementById('mfaQRCode').innerHTML = '';
+      }
       showMsg('loginStatus', '', 'info');
+      showLogin();
     }
 
     function switchTab(tab) {
@@ -510,7 +544,8 @@
       const tabMap = {
         'upload': 0,
         'videos': 1,
-        'jobs': 2
+        'jobs': 2,
+        'mfa': 3
       };
       
       const tabIndex = tabMap[tab];
@@ -669,11 +704,13 @@
           doSignup();
         } else if (!document.getElementById('confirmForm').classList.contains('hidden')) {
           doConfirm();
-        } else if (!document.getElementById('mfaForm').classList.contains('hidden')) {
-          setupMFA();
+        } else if (!document.getElementById('mfaLoginForm').classList.contains('hidden')) {
+          submitMFA();
         }
+      } else if (e.key === 'Enter' && document.getElementById('mfaTab').classList.contains('active')) {
+        setupMFA();
       }
     });
-  </script>
+</script>
 </body>
 </html>

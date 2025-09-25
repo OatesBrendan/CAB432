@@ -15,7 +15,7 @@ router.get('/me', authenticateCognitoToken, userController.getMe);
 router.get('/', authenticateCognitoToken, userController.getMainPage);
 router.get('/admin', authenticateCognitoToken, userController.getAdminPage);
 
-router.post('/users/setup-mfa', authenticateCognitoToken, userController.setupMFA);
-router.post('/users/verify-mfa', authenticateCognitoToken, userController.verifyMFA);
-router.post('/users/respond-mfa', userController.respondToMFAChallenge);
+router.post('/setup-mfa', authenticateCognitoToken, userController.setupMFA);
+router.post('/verify-mfa', authenticateCognitoToken, userController.verifyMFA);
+router.post('/respond-mfa', userController.respondToMFAChallenge);
 module.exports = router;

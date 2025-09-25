@@ -63,6 +63,7 @@ async function secretHash(clientId, username) {
 }
 
 // Middleware to authenticate Cognito tokens
+// In authMiddleware.js, modify authenticateCognitoToken:
 const authenticateCognitoToken = async (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
@@ -72,33 +73,36 @@ const authenticateCognitoToken = async (req, res, next) => {
       return res.status(401).json({ error: 'Token required' });
     }
 
-    // Try to verify as ID token first (contains user info)
+    // STORE RAW TOKEN FIRST
+    const rawToken = token;
+
+    // Try to verify as ID token first
     try {
       const payload = await idVerifier.verify(token);
       req.user = {
         username: payload['cognito:username'],
         email: payload.email,
         sub: payload.sub,
-        tokenType: 'id'
+        tokenType: 'id',
+        accessToken: rawToken  // Store raw token for MFA operations
       };
       return next();
     } catch (idTokenError) {
-      // If ID token fails, try access token
+      // Try access token
       try {
         const payload = await accessVerifier.verify(token);
         req.user = {
           username: payload.username,
           sub: payload.sub,
-          tokenType: 'access'
+          tokenType: 'access',
+          accessToken: rawToken  // Store raw token for MFA operations
         };
         return next();
       } catch (accessTokenError) {
-        console.log('Token verification failed:', accessTokenError.message);
         return res.status(403).json({ error: 'Invalid token' });
       }
     }
   } catch (error) {
-    console.log('Authentication error:', error.message);
     return res.status(500).json({ error: 'Authentication failed' });
   }
 };
